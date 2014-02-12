@@ -70,6 +70,12 @@ struct rbtree_node_cloner
    typedef typename NodeTraits::node_ptr  node_ptr;
    typedef detail::ebo_functor_holder<F>  base_t;
 
+   // copy extra data from src to dest
+   static void copy_data(node_ptr dest, const node_ptr& src)
+   {
+      NodeTraits::copy_data(dest, src);
+   }
+
    rbtree_node_cloner(F f)
       :  base_t(f)
    {}
@@ -78,6 +84,7 @@ struct rbtree_node_cloner
    {
       node_ptr n = base_t::get()(p);
       NodeTraits::set_color(n, NodeTraits::get_color(p));
+      copy_data(n, p);
       return n;
    }
 };
@@ -167,6 +174,33 @@ class rbtree_algorithms
 
    typedef bstree_algorithms<NodeTraits>  bstree_algo;
 
+   public:
+   static void recompute_data(node_ptr node) { node_traits::recompute(node); }
+   static void recompute_data_ancestors(node_ptr node)
+   {
+      recompute_data_ancestors(node, bstree_algo::get_header(node));
+   }
+   static void recompute_data_ancestors(node_ptr start_node, node_ptr end_node)
+   {
+      for (node_ptr node = start_node;
+           node != end_node;
+           node = NodeTraits::get_parent(node)){
+         recompute_data(node);
+      }
+   }
+   static void rotate_left(const node_ptr & p, const node_ptr & header)
+   {
+       bstree_algo::rotate_left(p, header);
+       recompute_data(p);
+       recompute_data(bstree_algo::get_parent(p));
+   }
+   static void rotate_right(const node_ptr & p, const node_ptr & header)
+   {
+       bstree_algo::rotate_right(p, header);
+       recompute_data(p);
+       recompute_data(bstree_algo::get_parent(p));
+   }
+
    /// @endcond
 
    public:
@@ -199,7 +233,9 @@ class rbtree_algorithms
 
       node_ptr header1(bstree_algo::get_header(node1)), header2(bstree_algo::get_header(node2));
       swap_nodes(node1, header1, node2, header2);
-   }
+      recompute_data_ancestors(node1);
+      recompute_data_ancestors(node2);
+}
 
    //! @copydoc ::boost::intrusive::bstree_algorithms::swap_nodes(const node_ptr&,const node_ptr&,const node_ptr&,const node_ptr&)
    static void swap_nodes(const node_ptr & node1, const node_ptr & header1, const node_ptr & node2, const node_ptr & header2)
@@ -219,6 +255,7 @@ class rbtree_algorithms
       if(node_to_be_replaced == new_node)
          return;
       replace_node(node_to_be_replaced, bstree_algo::get_header(node_to_be_replaced), new_node);
+      recompute_data_ancestors(new_node);
    }
 
    //! @copydoc ::boost::intrusive::bstree_algorithms::replace_node(const node_ptr&,const node_ptr&,const node_ptr&)
@@ -271,7 +308,8 @@ class rbtree_algorithms
    {
       typename bstree_algo::data_for_rebalance info;
       bstree_algo::erase(header, z, rbtree_erase_fixup<NodeTraits>(), info);
-
+      // recompute data for ancestors of lowest node whose subtree changed: x_parent
+      recompute_data_ancestors(info.x_parent);
       //Rebalance rbtree
       if(NodeTraits::get_color(z) != NodeTraits::red()){
          rebalance_after_erasure(header, info.x, info.x_parent);
@@ -396,6 +434,9 @@ class rbtree_algorithms
       (const node_ptr & header, const node_ptr & new_value, const insert_commit_data &commit_data)
    {
       bstree_algo::insert_unique_commit(header, new_value, commit_data);
+      // recompute data for ancestors of lowest node touched
+      recompute_data_ancestors(bstree_algo::get_parent(new_value));
+      // rebalance rbtree
       rebalance_after_insertion(header, new_value);
    }
 
@@ -418,7 +459,7 @@ class rbtree_algorithms
             if(NodeTraits::get_color(w) == NodeTraits::red()){
                NodeTraits::set_color(w, NodeTraits::black());
                NodeTraits::set_color(x_parent, NodeTraits::red());
-               bstree_algo::rotate_left(x_parent, header);
+               rotate_left(x_parent, header);
                w = NodeTraits::get_right(x_parent);
             }
             if((!NodeTraits::get_left(w) || NodeTraits::get_color(NodeTraits::get_left(w))  == NodeTraits::black()) &&
@@ -431,14 +472,14 @@ class rbtree_algorithms
                if(!NodeTraits::get_right(w) || NodeTraits::get_color(NodeTraits::get_right(w)) == NodeTraits::black()){
                   NodeTraits::set_color(NodeTraits::get_left(w), NodeTraits::black());
                   NodeTraits::set_color(w, NodeTraits::red());
-                  bstree_algo::rotate_right(w, header);
+                  rotate_right(w, header);
                   w = NodeTraits::get_right(x_parent);
                }
                NodeTraits::set_color(w, NodeTraits::get_color(x_parent));
                NodeTraits::set_color(x_parent, NodeTraits::black());
                if(NodeTraits::get_right(w))
                   NodeTraits::set_color(NodeTraits::get_right(w), NodeTraits::black());
-               bstree_algo::rotate_left(x_parent, header);
+               rotate_left(x_parent, header);
                break;
             }
          }
@@ -448,7 +489,7 @@ class rbtree_algorithms
             if(NodeTraits::get_color(w) == NodeTraits::red()){
                NodeTraits::set_color(w, NodeTraits::black());
                NodeTraits::set_color(x_parent, NodeTraits::red());
-               bstree_algo::rotate_right(x_parent, header);
+               rotate_right(x_parent, header);
                w = NodeTraits::get_left(x_parent);
             }
             if((!NodeTraits::get_right(w) || NodeTraits::get_color(NodeTraits::get_right(w)) == NodeTraits::black()) &&
@@ -461,14 +502,14 @@ class rbtree_algorithms
                if(!NodeTraits::get_left(w) || NodeTraits::get_color(NodeTraits::get_left(w)) == NodeTraits::black()){
                   NodeTraits::set_color(NodeTraits::get_right(w), NodeTraits::black());
                   NodeTraits::set_color(w, NodeTraits::red());
-                  bstree_algo::rotate_left(w, header);
+                  rotate_left(w, header);
                   w = NodeTraits::get_left(x_parent);
                }
                NodeTraits::set_color(w, NodeTraits::get_color(x_parent));
                NodeTraits::set_color(x_parent, NodeTraits::black());
                if(NodeTraits::get_left(w))
                   NodeTraits::set_color(NodeTraits::get_left(w), NodeTraits::black());
-               bstree_algo::rotate_right(x_parent, header);
+               rotate_right(x_parent, header);
                break;
             }
          }
@@ -494,13 +535,13 @@ class rbtree_algorithms
             else {
                if(!bstree_algo::is_left_child(p)){
                   p = p_parent;
-                  bstree_algo::rotate_left(p, header);
+                  rotate_left(p, header);
                }
                node_ptr new_p_parent(NodeTraits::get_parent(p));
                node_ptr new_p_parent_parent(NodeTraits::get_parent(new_p_parent));
                NodeTraits::set_color(new_p_parent, NodeTraits::black());
                NodeTraits::set_color(new_p_parent_parent, NodeTraits::red());
-               bstree_algo::rotate_right(new_p_parent_parent, header);
+               rotate_right(new_p_parent_parent, header);
             }
          }
          else{
@@ -514,13 +555,13 @@ class rbtree_algorithms
             else{
                if(bstree_algo::is_left_child(p)){
                   p = p_parent;
-                  bstree_algo::rotate_right(p, header);
+                  rotate_right(p, header);
                }
                node_ptr new_p_parent(NodeTraits::get_parent(p));
                node_ptr new_p_parent_parent(NodeTraits::get_parent(new_p_parent));
                NodeTraits::set_color(new_p_parent, NodeTraits::black());
                NodeTraits::set_color(new_p_parent_parent, NodeTraits::red());
-               bstree_algo::rotate_left(new_p_parent_parent, header);
+               rotate_left(new_p_parent_parent, header);
             }
          }
       }
