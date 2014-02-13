@@ -63,6 +63,100 @@ namespace intrusive {
 
 #ifndef BOOST_INTRUSIVE_DOXYGEN_INVOKED
 
+namespace detail {
+
+// check for existence of member functions recompute_data() and copy_data()
+template <typename NodeTraits, typename NameGetter>
+struct has_member
+{
+    struct one { char _v[1]; };
+    struct two { char _v[2]; };
+    template <typename C> static two f(typename NameGetter::template get<C>*);
+    template <typename C> static one f(...);
+    static const bool value = (sizeof(f<NodeTraits>(0)) == sizeof(two));
+};
+
+// recompute_data() must be:
+// - static: pointer is (*) and not (T::*)
+// - return type: void
+// - arguments: T::node_ptr
+template <typename NodeTraits>
+struct recompute_data_sig
+{
+    typedef typename NodeTraits::node_ptr node_ptr;
+    typedef void (*type)(node_ptr);
+};
+
+// copy_data() must be:
+// - static: pointer is (*) and not (T::*)
+// - return type: void
+// - arguments: T::node_ptr, const T::node_ptr&
+template <typename NodeTraits>
+struct copy_data_sig
+{
+    typedef typename NodeTraits::node_ptr node_ptr;
+    typedef void (*type)(node_ptr, const node_ptr&);
+};
+
+struct has_recompute_data
+{
+    template <typename T, typename recompute_data_sig< T >::type = &T::recompute_data>
+    struct get {};
+};
+
+struct has_copy_data
+{
+    template <typename T, typename copy_data_sig< T >::type = &T::copy_data>
+    struct get {};
+};
+
+template <class NodeTraits, bool>
+struct recompute_data_holder_selector;
+
+template <class NodeTraits>
+struct recompute_data_holder_selector< NodeTraits, true >
+{
+    typedef typename NodeTraits::node_ptr node_ptr;
+    static void recompute_data(node_ptr node) { NodeTraits::recompute_data(node); }
+};
+
+template <class NodeTraits>
+struct recompute_data_holder_selector< NodeTraits, false >
+{
+    typedef typename NodeTraits::node_ptr node_ptr;
+    static void recompute_data(node_ptr) {}
+};
+
+template < typename NodeTraits >
+struct recompute_data_holder
+: public recompute_data_holder_selector< NodeTraits, has_member< NodeTraits, has_recompute_data >::value >
+{};
+
+template <class NodeTraits, bool>
+struct copy_data_holder_selector;
+
+template <class NodeTraits>
+struct copy_data_holder_selector< NodeTraits, true >
+{
+    typedef typename NodeTraits::node_ptr node_ptr;
+    static void copy_data(node_ptr dest, const node_ptr& src) { NodeTraits::copy_data(dest, src); }
+};
+
+template <class NodeTraits>
+struct copy_data_holder_selector< NodeTraits, false >
+{
+    typedef typename NodeTraits::node_ptr node_ptr;
+    static void copy_data(node_ptr, const node_ptr&) {}
+};
+
+template < typename NodeTraits >
+struct copy_data_holder
+: public copy_data_holder_selector< NodeTraits, has_member< NodeTraits, has_copy_data >::value >
+{};
+
+}
+
+
 template<class NodeTraits, class F>
 struct rbtree_node_cloner
    :  private detail::ebo_functor_holder<F>
@@ -70,11 +164,7 @@ struct rbtree_node_cloner
    typedef typename NodeTraits::node_ptr  node_ptr;
    typedef detail::ebo_functor_holder<F>  base_t;
 
-   // copy extra data from src to dest
-   static void copy_data(node_ptr dest, const node_ptr& src)
-   {
-      NodeTraits::copy_data(dest, src);
-   }
+   typedef detail::copy_data_holder< NodeTraits > copy_data_holder;
 
    rbtree_node_cloner(F f)
       :  base_t(f)
@@ -84,7 +174,7 @@ struct rbtree_node_cloner
    {
       node_ptr n = base_t::get()(p);
       NodeTraits::set_color(n, NodeTraits::get_color(p));
-      copy_data(n, p);
+      copy_data_holder::copy_data(n, p);
       return n;
    }
 };
@@ -175,7 +265,8 @@ class rbtree_algorithms
    typedef bstree_algorithms<NodeTraits>  bstree_algo;
 
    public:
-   static void recompute_data(node_ptr node) { node_traits::recompute(node); }
+   typedef detail::recompute_data_holder< NodeTraits > recompute_data_holder;
+   static void recompute_data(node_ptr node) { recompute_data_holder::recompute_data(node); }
    static void recompute_data_ancestors(node_ptr node)
    {
       recompute_data_ancestors(node, bstree_algo::get_header(node));
@@ -192,13 +283,13 @@ class rbtree_algorithms
    {
        bstree_algo::rotate_left(p, header);
        recompute_data(p);
-       recompute_data(bstree_algo::get_parent(p));
+       recompute_data(NodeTraits::get_parent(p));
    }
    static void rotate_right(const node_ptr & p, const node_ptr & header)
    {
        bstree_algo::rotate_right(p, header);
        recompute_data(p);
-       recompute_data(bstree_algo::get_parent(p));
+       recompute_data(NodeTraits::get_parent(p));
    }
 
    /// @endcond
@@ -434,8 +525,6 @@ class rbtree_algorithms
       (const node_ptr & header, const node_ptr & new_value, const insert_commit_data &commit_data)
    {
       bstree_algo::insert_unique_commit(header, new_value, commit_data);
-      // recompute data for ancestors of lowest node touched
-      recompute_data_ancestors(bstree_algo::get_parent(new_value));
       // rebalance rbtree
       rebalance_after_insertion(header, new_value);
    }
@@ -520,6 +609,8 @@ class rbtree_algorithms
 
    static void rebalance_after_insertion(const node_ptr & header, node_ptr p)
    {
+      // recompute data for ancestors of new node
+      recompute_data_ancestors(p);
       NodeTraits::set_color(p, NodeTraits::red());
       while(p != NodeTraits::get_parent(header) && NodeTraits::get_color(NodeTraits::get_parent(p)) == NodeTraits::red()){
          node_ptr p_parent(NodeTraits::get_parent(p));
