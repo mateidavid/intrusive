@@ -95,7 +95,8 @@ template <typename NodeTraits>
 struct copy_data_sig
 {
     typedef typename NodeTraits::node_ptr node_ptr;
-    typedef void (*type)(node_ptr, const node_ptr&);
+    typedef typename NodeTraits::const_node_ptr const_node_ptr;
+    typedef void (*type)(node_ptr, const_node_ptr);
 };
 
 struct has_recompute_data
@@ -117,7 +118,21 @@ template <class NodeTraits>
 struct recompute_data_holder_selector< NodeTraits, true >
 {
     typedef typename NodeTraits::node_ptr node_ptr;
+    typedef bstree_algorithms<NodeTraits> bstree_algo;
     static void recompute_data(node_ptr node) { NodeTraits::recompute_data(node); }
+    static void recompute_data_ancestors(node_ptr start_node, node_ptr end_node = node_ptr())
+    {
+        if (not end_node)
+        {
+            end_node = bstree_algo::get_header(start_node);
+        }
+        for (node_ptr node = start_node;
+             node != end_node;
+             node = NodeTraits::get_parent(node))
+        {
+            recompute_data(node);
+        }
+    }
 };
 
 template <class NodeTraits>
@@ -125,6 +140,7 @@ struct recompute_data_holder_selector< NodeTraits, false >
 {
     typedef typename NodeTraits::node_ptr node_ptr;
     static void recompute_data(node_ptr) {}
+    static void recompute_data_ancestors(node_ptr, node_ptr = node_ptr()) {}
 };
 
 template < typename NodeTraits >
@@ -139,14 +155,16 @@ template <class NodeTraits>
 struct copy_data_holder_selector< NodeTraits, true >
 {
     typedef typename NodeTraits::node_ptr node_ptr;
-    static void copy_data(node_ptr dest, const node_ptr& src) { NodeTraits::copy_data(dest, src); }
+    typedef typename NodeTraits::const_node_ptr const_node_ptr;
+    static void copy_data(node_ptr dest, const_node_ptr src) { NodeTraits::copy_data(dest, src); }
 };
 
 template <class NodeTraits>
 struct copy_data_holder_selector< NodeTraits, false >
 {
     typedef typename NodeTraits::node_ptr node_ptr;
-    static void copy_data(node_ptr, const node_ptr&) {}
+    typedef typename NodeTraits::const_node_ptr const_node_ptr;
+    static void copy_data(node_ptr, const_node_ptr) {}
 };
 
 template < typename NodeTraits >
@@ -266,30 +284,17 @@ class rbtree_algorithms
 
    public:
    typedef detail::recompute_data_holder< NodeTraits > recompute_data_holder;
-   static void recompute_data(node_ptr node) { recompute_data_holder::recompute_data(node); }
-   static void recompute_data_ancestors(node_ptr node)
-   {
-      recompute_data_ancestors(node, bstree_algo::get_header(node));
-   }
-   static void recompute_data_ancestors(node_ptr start_node, node_ptr end_node)
-   {
-      for (node_ptr node = start_node;
-           node != end_node;
-           node = NodeTraits::get_parent(node)){
-         recompute_data(node);
-      }
-   }
    static void rotate_left(const node_ptr & p, const node_ptr & header)
    {
        bstree_algo::rotate_left(p, header);
-       recompute_data(p);
-       recompute_data(NodeTraits::get_parent(p));
+       recompute_data_holder::recompute_data(p);
+       recompute_data_holder::recompute_data(NodeTraits::get_parent(p));
    }
    static void rotate_right(const node_ptr & p, const node_ptr & header)
    {
        bstree_algo::rotate_right(p, header);
-       recompute_data(p);
-       recompute_data(NodeTraits::get_parent(p));
+       recompute_data_holder::recompute_data(p);
+       recompute_data_holder::recompute_data(NodeTraits::get_parent(p));
    }
 
    /// @endcond
@@ -324,8 +329,8 @@ class rbtree_algorithms
 
       node_ptr header1(bstree_algo::get_header(node1)), header2(bstree_algo::get_header(node2));
       swap_nodes(node1, header1, node2, header2);
-      recompute_data_ancestors(node1);
-      recompute_data_ancestors(node2);
+      recompute_data_holder::recompute_data_ancestors(node1);
+      recompute_data_holder::recompute_data_ancestors(node2);
 }
 
    //! @copydoc ::boost::intrusive::bstree_algorithms::swap_nodes(const node_ptr&,const node_ptr&,const node_ptr&,const node_ptr&)
@@ -346,7 +351,7 @@ class rbtree_algorithms
       if(node_to_be_replaced == new_node)
          return;
       replace_node(node_to_be_replaced, bstree_algo::get_header(node_to_be_replaced), new_node);
-      recompute_data_ancestors(new_node);
+      recompute_data_holder::recompute_data_ancestors(new_node);
    }
 
    //! @copydoc ::boost::intrusive::bstree_algorithms::replace_node(const node_ptr&,const node_ptr&,const node_ptr&)
@@ -400,7 +405,7 @@ class rbtree_algorithms
       typename bstree_algo::data_for_rebalance info;
       bstree_algo::erase(header, z, rbtree_erase_fixup<NodeTraits>(), info);
       // recompute data for ancestors of lowest node whose subtree changed: x_parent
-      recompute_data_ancestors(info.x_parent);
+      recompute_data_holder::recompute_data_ancestors(info.x_parent);
       //Rebalance rbtree
       if(NodeTraits::get_color(z) != NodeTraits::red()){
          rebalance_after_erasure(header, info.x, info.x_parent);
@@ -610,7 +615,7 @@ class rbtree_algorithms
    static void rebalance_after_insertion(const node_ptr & header, node_ptr p)
    {
       // recompute data for ancestors of new node
-      recompute_data_ancestors(p);
+      recompute_data_holder::recompute_data_ancestors(p);
       NodeTraits::set_color(p, NodeTraits::red());
       while(p != NodeTraits::get_parent(header) && NodeTraits::get_color(NodeTraits::get_parent(p)) == NodeTraits::red()){
          node_ptr p_parent(NodeTraits::get_parent(p));
