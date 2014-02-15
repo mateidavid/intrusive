@@ -57,6 +57,7 @@
 #include <boost/intrusive/detail/utilities.hpp>
 #include <boost/intrusive/bstree_algorithms.hpp>
 #include <boost/intrusive/pointer_traits.hpp>
+#include <boost/intrusive/detail/has_member.hpp>
 
 namespace boost {
 namespace intrusive {
@@ -64,17 +65,6 @@ namespace intrusive {
 #ifndef BOOST_INTRUSIVE_DOXYGEN_INVOKED
 
 namespace detail {
-
-// check for existence of member functions recompute_data() and copy_data()
-template <typename NodeTraits, typename NameGetter>
-struct has_member
-{
-    struct one { char _v[1]; };
-    struct two { char _v[2]; };
-    template <typename C> static two f(typename NameGetter::template get<C>*);
-    template <typename C> static one f(...);
-    static const bool value = (sizeof(f<NodeTraits>(0)) == sizeof(two));
-};
 
 // recompute_data() must be:
 // - static: pointer is (*) and not (T::*)
