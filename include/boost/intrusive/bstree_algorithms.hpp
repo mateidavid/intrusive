@@ -25,11 +25,69 @@
 #include <boost/intrusive/detail/math.hpp>
 #include <boost/intrusive/detail/algo_type.hpp>
 #include <utility>
+#include <boost/tti/has_static_member_function.hpp>
 
 namespace boost {
 namespace intrusive {
 
 /// @cond
+
+namespace detail {
+
+template <typename NodeTraits, bool>
+struct extra_data_manager_generator
+{
+    typedef typename NodeTraits::node_ptr node_ptr;
+    typedef typename NodeTraits::const_node_ptr const_node_ptr;
+    static const bool enabled = false;
+    static void clone_extra_data(node_ptr, const_node_ptr) {}
+    static void recompute_extra_data(node_ptr) {}
+    static void recompute_extra_data(node_ptr, node_ptr) {}
+};
+
+template <typename NodeTraits>
+struct extra_data_manager_generator< NodeTraits, true >
+{
+    typedef typename NodeTraits::node_ptr node_ptr;
+    typedef typename NodeTraits::const_node_ptr const_node_ptr;
+    static const bool enabled = true;
+    static void clone_extra_data(node_ptr dest, const_node_ptr src)
+    {
+        NodeTraits::clone_extra_data(dest, src);
+    }
+    static void recompute_extra_data(node_ptr node)
+    {
+        NodeTraits::recompute_extra_data(node);
+    }
+    static void recompute_extra_data(node_ptr start_node, node_ptr end_node)
+    {
+        for (node_ptr node = start_node;
+             node != end_node;
+             node = NodeTraits::get_parent(node))
+        {
+            recompute_extra_data(node);
+        }
+    }
+};
+
+BOOST_TTI_HAS_STATIC_MEMBER_FUNCTION(clone_extra_data)
+BOOST_TTI_HAS_STATIC_MEMBER_FUNCTION(recompute_extra_data)
+
+template <typename NodeTraits>
+struct extra_data_manager
+    : extra_data_manager_generator<
+        NodeTraits,
+        has_static_member_function_clone_extra_data<
+            NodeTraits,
+            void (typename NodeTraits::node_ptr, typename NodeTraits::const_node_ptr)
+        >::value
+        and has_static_member_function_recompute_extra_data<
+            NodeTraits,
+            void (typename NodeTraits::node_ptr)
+        >::value
+      > {};
+
+} // namespace detail
 
 //! This type is the information that will be filled by insert_unique_check
 template <class NodePtr>
@@ -176,6 +234,7 @@ class bstree_algorithms
    typedef typename NodeTraits::const_node_ptr  const_node_ptr;
    typedef insert_commit_data_t<node_ptr>       insert_commit_data;
    typedef data_for_rebalance_t<node_ptr>       data_for_rebalance;
+   typedef detail::extra_data_manager<NodeTraits> extra_data_manager;
 
    /// @cond
 
@@ -461,6 +520,9 @@ class bstree_algorithms
             NodeTraits::set_right(temp, node2);
          }
       }
+      //recompute extra data for both
+      extra_data_manager::recompute_extra_data(node1, header2);
+      extra_data_manager::recompute_extra_data(node2, header1);
    }
 
    //! <b>Requires</b>: node_to_be_replaced must be inserted in a tree
@@ -539,6 +601,8 @@ class bstree_algorithms
             NodeTraits::set_right(temp, new_node);
          }
       }
+      //recompute extra data
+      extra_data_manager::recompute_extra_data(new_node, header);
    }
 
    //! <b>Requires</b>: 'node' is a node from the tree except the header.
@@ -1607,6 +1671,8 @@ class bstree_algorithms
       //If z had 2 children, x_parent is the new parent of y (z_parent)
       BOOST_ASSERT(!x || NodeTraits::get_parent(x) == x_parent);
       info.x_parent = x_parent;
+      //recompute data upwards of lowest node touched
+      extra_data_manager::recompute_extra_data(x_parent, header);
    }
 
    //! <b>Requires</b>: node is a node of the tree but it's not the header.
@@ -1812,6 +1878,8 @@ class bstree_algorithms
       NodeTraits::set_parent(new_node, parent_node);
       NodeTraits::set_right(new_node, node_ptr());
       NodeTraits::set_left(new_node, node_ptr());
+      //recompute data upwards of new node
+      extra_data_manager::recompute_extra_data(new_node, header);
    }
 
    //Fix header and own's parent data when replacing x with own, providing own's old data with parent
@@ -1835,6 +1903,8 @@ class bstree_algorithms
       }
       NodeTraits::set_left(p_right, p);
       NodeTraits::set_parent(p, p_right);
+      extra_data_manager::recompute_extra_data(p);
+      extra_data_manager::recompute_extra_data(p_right);
    }
 
    // rotate p to left (with header and p's parent fixup)
@@ -1856,6 +1926,8 @@ class bstree_algorithms
       }
       NodeTraits::set_right(p_left, p);
       NodeTraits::set_parent(p, p_left);
+      extra_data_manager::recompute_extra_data(p);
+      extra_data_manager::recompute_extra_data(p_left);
    }
 
    // rotate p to right (with header and p's parent fixup)
@@ -1971,6 +2043,7 @@ class bstree_algorithms
          //We'll calculate leftmost and rightmost nodes while iterating
          node_ptr current = source_root;
          node_ptr insertion_point = target_sub_root = cloner(current);
+         extra_data_manager::clone_extra_data(target_sub_root, current);
 
          //We'll calculate leftmost and rightmost nodes while iterating
          node_ptr leftmost  = target_sub_root;
@@ -1990,6 +2063,7 @@ class bstree_algorithms
                node_ptr temp = insertion_point;
                //Clone and mark as leaf
                insertion_point = cloner(current);
+               extra_data_manager::clone_extra_data(insertion_point, current);
                NodeTraits::set_left  (insertion_point, node_ptr());
                NodeTraits::set_right (insertion_point, node_ptr());
                //Insert left
@@ -2006,6 +2080,7 @@ class bstree_algorithms
                node_ptr temp = insertion_point;
                //Clone and mark as leaf
                insertion_point = cloner(current);
+               extra_data_manager::clone_extra_data(insertion_point, current);
                NodeTraits::set_left  (insertion_point, node_ptr());
                NodeTraits::set_right (insertion_point, node_ptr());
                //Insert right
